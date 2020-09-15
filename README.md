@@ -7,11 +7,13 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/prometheus/node_exporter)][goreportcard]
 
 to enable basic authentication run node exporter with these parameters:
-first Download bin from git: 
+first Download bin from git:
+```bash
 
-wget https://github.com/Abbas-gheydi/node-exporter/bin/linux64/node-exporter
+wget https://github.com/Abbas-gheydi/node_exporter/raw/master/bin/linux64/node-exporter
 chmod +x node-exporter
-./node-exporter --web.auth-enabled="true" --web.auth-user="YOUR USER NAME" --web.auth-pass="YOUR PASSWORD" 
+./node-exporter --web.auth-enabled="true" --web.auth-user="YOUR USER NAME" --web.auth-pass="YOUR PASSWORD"
+```
 
 
 Prometheus exporter for hardware and OS metrics exposed by \*NIX kernels, written

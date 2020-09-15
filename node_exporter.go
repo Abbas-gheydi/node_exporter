@@ -14,11 +14,13 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/prometheus/common/promlog"
 	"github.com/prometheus/common/promlog/flag"
@@ -33,9 +35,13 @@ import (
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
+
 // handler wraps an unfiltered http.Handler but uses a filtered handler,
 // created on the fly, if filtering is requested. Create instances with
 // newHandler.
+
+
+//var auth bool
 type handler struct {
 	unfilteredHandler http.Handler
 	// exporterMetricsRegistry is a separate registry for the metrics about
@@ -44,6 +50,30 @@ type handler struct {
 	includeExporterMetrics  bool
 	maxRequests             int
 	logger                  log.Logger
+}
+
+//todo: basic auth
+func checkAuth(w http.ResponseWriter, r *http.Request) bool {
+	//auth := *AUTH
+	if *AUTH == "true"{
+
+
+	s := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
+	if len(s) != 2 { return false }
+
+	b, err := base64.StdEncoding.DecodeString(s[1])
+	if err != nil { return false }
+
+	pair := strings.SplitN(string(b), ":", 2)
+	if len(pair) != 2 { return false }
+
+		return pair[0] == *USER && pair[1] == *PASS
+
+	}else {
+		return true
+	}
+
+
 }
 
 func newHandler(includeExporterMetrics bool, maxRequests int, logger log.Logger) *handler {
@@ -69,23 +99,35 @@ func newHandler(includeExporterMetrics bool, maxRequests int, logger log.Logger)
 
 // ServeHTTP implements http.Handler.
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	filters := r.URL.Query()["collect[]"]
-	level.Debug(h.logger).Log("msg", "collect query:", "filters", filters)
+	//add basic auth
+	if checkAuth(w, r) {
 
-	if len(filters) == 0 {
-		// No filters, use the prepared unfiltered handler.
-		h.unfilteredHandler.ServeHTTP(w, r)
+		filters := r.URL.Query()["collect[]"]
+		level.Debug(h.logger).Log("msg", "collect query:", "filters", filters)
+
+		if len(filters) == 0 {
+			// No filters, use the prepared unfiltered handler.
+			h.unfilteredHandler.ServeHTTP(w, r)
+			return
+		}
+		// To serve filtered metrics, we create a filtering handler on the fly.
+		filteredHandler, err := h.innerHandler(filters...)
+		if err != nil {
+			level.Warn(h.logger).Log("msg", "Couldn't create filtered metrics handler:", "err", err)
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(fmt.Sprintf("Couldn't create filtered metrics handler: %s", err)))
+			return
+		}
+		filteredHandler.ServeHTTP(w, r)
 		return
 	}
-	// To serve filtered metrics, we create a filtering handler on the fly.
-	filteredHandler, err := h.innerHandler(filters...)
-	if err != nil {
-		level.Warn(h.logger).Log("msg", "Couldn't create filtered metrics handler:", "err", err)
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf("Couldn't create filtered metrics handler: %s", err)))
-		return
-	}
-	filteredHandler.ServeHTTP(w, r)
+	//add by abbas
+	w.Header().Set("WWW-Authenticate", `Basic realm="MY REALM"`)
+	w.WriteHeader(401)
+	w.Write([]byte("401 Unauthorized\n"))
+
+
+
 }
 
 // innerHandler is used to create both the one unfiltered http.Handler to be
@@ -136,8 +178,25 @@ func (h *handler) innerHandler(filters ...string) (http.Handler, error) {
 	return handler, nil
 }
 
-func main() {
+//func main() {
 	var (
+
+		AUTH = kingpin.Flag(
+			"web.auth-enabled",
+			"enable Basic authentication",
+			).Default("false").String()
+
+		USER = kingpin.Flag(
+			"web.auth-user",
+			"username for Basic authentication",
+		).Default("user").String()
+		PASS = kingpin.Flag(
+			"web.auth-pass",
+			"password for Basic authentication",
+		).Default("pass").String()
+
+
+
 		listenAddress = kingpin.Flag(
 			"web.listen-address",
 			"Address on which to expose metrics and web interface.",
@@ -162,7 +221,12 @@ func main() {
 			"web.config",
 			"[EXPERIMENTAL] Path to config yaml file that can enable TLS or authentication.",
 		).Default("").String()
+
+
 	)
+func main() {
+
+
 
 	promlogConfig := &promlog.Config{}
 	flag.AddFlags(kingpin.CommandLine, promlogConfig)
@@ -178,14 +242,26 @@ func main() {
 	level.Info(logger).Log("msg", "Build context", "build_context", version.BuildContext())
 
 	http.Handle(*metricsPath, newHandler(!*disableExporterMetrics, *maxRequests, logger))
+	//edit to enable basic auth
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html>
+		if checkAuth(w, r) {
+
+			w.Write([]byte(`<html>
 			<head><title>Node Exporter</title></head>
 			<body>
 			<h1>Node Exporter</h1>
 			<p><a href="` + *metricsPath + `">Metrics</a></p>
 			</body>
 			</html>`))
+			return
+		}
+
+		w.Header().Set("WWW-Authenticate", `Basic realm="MY REALM"`)
+		w.WriteHeader(401)
+		w.Write([]byte("401 Unauthorized\n"))
+
+
+
 	})
 
 	level.Info(logger).Log("msg", "Listening on", "address", *listenAddress)
